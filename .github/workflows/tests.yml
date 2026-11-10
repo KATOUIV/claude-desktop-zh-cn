@@ -31,6 +31,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: powershell
         run: |
+          ./tests/test_windows_locale_preference.ps1
           ./tests/Test-StructuralReplacements.ps1
           ./tests/Test-SlashCommandMenu.ps1
           ./tests/Test-UnregisterLanguage.ps1
@@ -44,6 +45,7 @@ jobs:
         if: runner.os == 'Linux'
         shell: pwsh
         run: |
+          ./tests/test_windows_locale_preference.ps1
           ./tests/Test-StructuralReplacements.ps1
           ./tests/Test-SlashCommandMenu.ps1
           ./tests/Test-UnregisterLanguage.ps1

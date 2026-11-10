@@ -1,0 +1,30 @@
+{
+  "tool": "REA analyze_javascript_application",
+  "date": "2026-11-10",
+  "target": "Claude Desktop 4.23118.1 ion-dist.asar",
+  "module": "assets/v1/shared-99-Do2dhk0C.js",
+  "artifact_sha256": "fb4820810abacc12a7f36e9bf46b0bd852404ecdac3b9cbd486ed9205899a424",
+  "evidence_id": "ev_5e61bbd4d90189de75d286f01ccd4dc9bc73f8bab8c53eea8d905f7d9f00a7c5",
+  "parent_evidence_id": "ev_d2b6c32efb12eec2e8e9805dceb91749f94c3ea6a25b81be544cd9e2cfaa6781",
+  "statistics": {
+    "relevant_files": 4472,
+    "nested_asar_containers": 0,
+    "text_bytes_read": 469856,
+    "invalid_utf8_files": 0,
+    "parsed_javascript_files": 1,
+    "visited_ast_nodes": 126836,
+    "findings": 1925,
+    "modules": 0,
+    "parse_failures": 0
+  },
+  "limits": [
+    "One language module analyzed as inert syntax; no bundle bootstrap executed",
+    "Other 4471 inventoried files not analyzed",
+    "Semantic graph is partial and node-limited; runtime behavior was checked separately"
+  ],
+  "source_review": [
+    "Install-LanguageFiles -> Register-Language -> Patch-HardcodedFrontendStrings -> Merge-LocaleOverride -> Patch-DesktopShellLocale -> Complete-FrontendPatchTarget -> Set-ClaudeLocale",
+    "Upstream 1.4.23 service signature-verification patch is skipped in this maintenance branch"
+  ],
+  "finding": "A separate renderer locale override requires compatibility handling when the host selects en-US."
+}

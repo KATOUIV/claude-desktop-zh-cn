@@ -1,0 +1,32 @@
+name: Track upstream localization
+on:
+  schedule:
+    - cron: '0 1 * * *' # 09:00 Asia/Hong_Kong; GitHub may delay scheduled jobs.
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: track-upstream
+  cancel-in-progress: false
+jobs:
+  sync:
+    if: github.repository == 'KATOUIV/claude-desktop-zh-cn'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      UPSTREAM: javaht/claude-desktop-zh-cn
+    steps:
+      - name: Fast-forward the upstream mirror
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh repo sync "$GITHUB_REPOSITORY" --source "$UPSTREAM" --branch main
+          release=$(gh api "repos/$UPSTREAM/releases/latest" --jq .tag_name)
+          ahead=$(gh api "repos/$GITHUB_REPOSITORY/compare/katou%2Fwindows-compat...main" --jq .ahead_by)
+          {
+            echo '### Localization upstream tracking'
+            printf 'Latest upstream release: `%s`\n\n' "$release"
+            printf 'Commits pending compatibility review: %s\n\n' "$ahead"
+            printf '[Review changes](https://github.com/%s/compare/katou/windows-compat...main)\n' "$GITHUB_REPOSITORY"
+            echo 'Only main is fast-forwarded. The compatibility branch and local Claude installation are preserved.'
+          } >> "$GITHUB_STEP_SUMMARY"

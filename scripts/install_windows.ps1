@@ -4111,6 +4111,8 @@ function Install-WindowsLanguagePack {
         Patch-HardcodedFrontendStrings $resourcesPath $LanguageCode
         Patch-SlashCommandMenu $resourcesPath $LanguageCode
         Patch-LanguageDisplayNames $resourcesPath
+        . (Join-Path $PSScriptRoot "windows_locale_preference.ps1")
+        Set-CodeLocalePreference (Join-Path $resourcesPath "ion-dist") $LanguageCode
         # 前端同样固定加载 en-US 词库，把中文词库合并进去才能覆盖仅存在于词库的文案。
         $mergedFrontend = Merge-LocaleOverride (Join-Path $resourcesPath "ion-dist\i18n") $LanguageCode
         if ($mergedFrontend -gt 0) {
@@ -4123,7 +4125,8 @@ function Install-WindowsLanguagePack {
         $patchTarget = $null
 
         $appVersion = Get-ClaudeExeProductVersion $claudePath
-        Patch-CoworkService $resourcesPath $appVersion
+        # This maintenance branch localizes the UI without changing the Cowork service binary.
+        Write-Host "  Cowork service binary preserved."
 
         Write-Step "[7/7] 写入用户语言配置"
         Set-ClaudeLocale $LanguageCode
@@ -4137,7 +4140,7 @@ function Install-WindowsLanguagePack {
         Write-Host ""
         Write-Host "安装完成。如果界面未立即切换，请在 Language 中选择 $label。" -ForegroundColor Green
         if ($usedAsarFrontend) {
-            Write-Host "提示：Claude 4.29+ 将前端打包为 ion-dist.asar，主进程菜单词库在 app.asar 内；安装器已重建 ion-dist.asar、就地改写 app.asar 并更新 Claude.exe 完整性哈希；同时已自动修补 cowork-svc.exe 签名校验，解决 Cowork 报 RPC pipe closed 的问题。" -ForegroundColor DarkYellow
+            Write-Host "提示：Claude 4.29+ 将前端打包为 ion-dist.asar，主进程菜单词库在 app.asar 内；安装器已重建 ion-dist.asar、就地改写 app.asar 并更新 Claude.exe 完整性哈希；Cowork 服务文件保持原样，Cowork 功能尚未验证。" -ForegroundColor DarkYellow
         }
         else {
             Write-Host "提示：本补丁仅写入中文资源，不改动 app.asar / Claude.exe；官方账号登录界面请直接使用 Claude 自带的语言设置。" -ForegroundColor DarkGray

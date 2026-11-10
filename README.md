@@ -1,5 +1,7 @@
 # Claude Desktop 中文补丁
 
+> 本 Fork 的 Windows 兼容修复、已验证版本及更新策略见 [维护说明](maintenance/README.zh-CN.md)。
+
 一个用于 Claude Desktop 的本地中文界面补丁，支持简体中文、繁體中文（台灣）和繁體中文（香港）。
 
 macOS 双击 `install-mac.command`；Windows 双击 `install-windows.bat` 后按 UAC 提示授权；Linux（deb 包安装）在终端运行 `./install-linux.sh`。脚本会给 Claude Desktop 添加中文语言选项并安装中文界面资源。

@@ -1,0 +1,13 @@
+{
+  "upstream": "javaht/claude-desktop-zh-cn",
+  "upstreamRelease": "1.4.23",
+  "upstreamCommit": "6b611ab",
+  "maintenanceBranch": "katou/windows-compat",
+  "verifiedClaudeVersions": ["4.23118.0", "4.23118.1"],
+  "currentVerifiedClaudeVersion": "4.23118.1",
+  "language": "zh-CN",
+  "verifiedOn": "2026-11-10",
+  "coworkServicePolicy": "preserve-original-binary; functionality-unverified",
+  "automaticInstallation": false,
+  "limitations": ["Some new labels remain English", "Slash command gloss anchor did not match", "Official Claude updates replace patched packages"]
+}
