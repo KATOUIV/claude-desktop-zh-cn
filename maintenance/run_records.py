@@ -13,7 +13,7 @@ from pathlib import Path
 
 ERROR_CODES = frozenset({"tracking_failed", "invalid_tracking_state", "github_command_failed",
                          "github_timeout", "github_permission_denied", "github_auth_failed",
-                         "github_rate_limited", "mirror_diverged", "report_write_failed"})
+                         "github_rate_limited", "github_not_found", "mirror_diverged", "report_write_failed"})
 OWNED_NAME = re.compile(r"check-(\d{8}T\d{6}Z)-[0-9a-f]{32}\.json\Z")
 RETENTION_DAYS = 30
 MAX_RECORDS = 120
@@ -36,6 +36,7 @@ def sanitize(payload, now=None):
                 "claude_version": r"[0-9]+(?:\.[0-9]+){1,3}", "mirror_sha": r"[0-9a-f]{40}",
                 "fork_sha": r"[0-9a-f]{40}",
                 "release_url": r"https://github\.com/javaht/claude-desktop-zh-cn/releases/tag/v?[0-9]+(?:\.[0-9]+){1,3}(?:-[a-zA-Z0-9.-]+)?",
+                "fork_release_url": r"https://github\.com/KATOUIV/claude-desktop-zh-cn/releases/tag/v?[0-9]+\.[0-9]+\.[0-9]+",
                 "pull_request": r"https://github\.com/KATOUIV/claude-desktop-zh-cn/pull/[0-9]+"}
     for key, pattern in patterns.items():
         value = payload.get(key)
