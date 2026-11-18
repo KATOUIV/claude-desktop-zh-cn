@@ -1,6 +1,6 @@
 # Claude Desktop 中文补丁
 
-> 本 Fork 的 Windows 兼容修复、已验证版本及更新策略见 [维护说明](maintenance/README.zh-CN.md)。
+> 下载优先使用 [上游最新 Release](https://github.com/javaht/claude-desktop-zh-cn/releases/latest)。本 Fork 的兼容修复、已验证范围及更新策略见 [维护说明](maintenance/README.zh-CN.md)。
 
 一个用于 Claude Desktop 的本地中文界面补丁，支持简体中文、繁體中文（台灣）和繁體中文（香港）。
 

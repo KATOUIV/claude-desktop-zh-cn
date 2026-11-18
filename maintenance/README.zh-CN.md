@@ -5,7 +5,7 @@
 ## 更新与安装
 
 - `main` 每 6 小时快进同步；`katou/windows-compat` 保留兼容修复。不要使用 **Discard commits**，不强推或绕过保护。
-- 同一云端任务同步最新正式 [Release](https://github.com/KATOUIV/claude-desktop-zh-cn/releases/latest)，标签保持上游原始提交，不重打包、不上传本机文件、不覆盖旧标签或发布说明。下方 Source code 是上游原版；需要本 Fork 补充修复可下载 [维护分支 ZIP](https://github.com/KATOUIV/claude-desktop-zh-cn/archive/refs/heads/katou/windows-compat.zip)，附加文件与原始说明链接回上游。若 GitHub 限制云端令牌创建带工作流差异的发布，由每日任务复用已有 gh 登录运行同一协调器补齐，不新增长期凭据。
+- 默认下载 [上游最新 Release](https://github.com/javaht/claude-desktop-zh-cn/releases/latest)，安装方式和兼容范围以原作者说明为准。Fork 只跟踪版本，不重复发版；已有 Release 保留作备份，不改写标签。确需额外兼容修复时，才使用 [维护分支 ZIP](https://github.com/KATOUIV/claude-desktop-zh-cn/archive/refs/heads/katou/windows-compat.zip)，并先核对下述已验证范围。
 - 云端维护一个草稿 PR，不合并维护分支。现有本机任务每天香港时间 09:30 检查；审阅代码、权限及依赖变化，确认 Windows/Linux 必需测试通过后，才通过受保护 PR 合并。冲突在整合分支处理，保留上游词条和本地修复；未知语义冲突或语言锚点停止处理。
 - 计划可能延迟或被 GitHub 暂停；检查任务、保护和保留期限，超过 30 小时无有效运行时调查。恢复后实跑验证，不创建重复任务或无意义提交。Fork 未使用的 Pages 保持停用。
 - 定期维护不关闭或重启 Claude、不安装补丁、不更改客户端更新设置。安装仍使用上游 `install-windows.bat`；另行安装前核对 [已验证范围](compatibility.json)，完成备份、完整性与语法检查，再重启观察界面。未知版本不试装，保留原 Cowork 服务文件。修改可执行文件会使原签名失效。

@@ -22,30 +22,16 @@ class FakeGitHub:
         self.fail_sync = fail_sync
         self.calls = []
         self.next_page = False
-        self.release_exists = True
-        self.tag_sha = "b" * 40
-        self.release_ancestry = "ahead"
 
     def sync(self):
         self.calls.append(("sync",))
         if self.fail_sync:
             raise RuntimeError("mirror diverged")
 
-    def api(self, endpoint, method="GET", data=None, missing_ok=False):
+    def api(self, endpoint, method="GET", data=None):
         self.calls.append((method, endpoint, data))
         if endpoint.endswith("releases/latest"):
             return {"tag_name": "1.4.24", "html_url": "https://github.com/javaht/claude-desktop-zh-cn/releases/tag/1.4.24"}
-        if endpoint.endswith("/commits/1.4.24"):
-            return {"sha": "b" * 40}
-        if "/compare/" + "b" * 40 + "..." in endpoint:
-            return {"status": self.release_ancestry}
-        if endpoint.endswith("/git/ref/tags/1.4.24"):
-            return {"object": {"type": "commit", "sha": self.tag_sha}} if self.release_exists else None
-        if endpoint.endswith("/releases/tags/1.4.24"):
-            return {"html_url": "https://github.com/KATOUIV/claude-desktop-zh-cn/releases/tag/1.4.24", "draft": False, "prerelease": False} if self.release_exists else None
-        if method == "POST" and endpoint.endswith("/releases"):
-            self.release_exists = True
-            return {"html_url": "https://github.com/KATOUIV/claude-desktop-zh-cn/releases/tag/1.4.24"}
         if endpoint.endswith("/git/ref/heads/main"):
             return {"object": {"sha": "a" * 40}}
         if "/compare/" in endpoint:
@@ -174,67 +160,13 @@ class UpstreamTrackingTests(unittest.TestCase):
                 self.tracker.GitHub.run(["gh", "api"])
         self.assertEqual(str(error.exception), "github_timeout")
 
-    def test_release_sync_uses_original_commit_without_local_uploads(self):
+    def test_official_release_is_read_only_and_is_the_download_source(self):
         client = FakeGitHub(pending=0)
-        client.release_exists = False
-        release = client.api("repos/javaht/claude-desktop-zh-cn/releases/latest")
-        self.tracker.sync_release(client, release, "a" * 40)
-        writes = [c for c in client.calls if c[0] != "GET"]
-        self.assertEqual(len(writes), 1)
-        self.assertTrue(writes[0][1].endswith("/releases"))
-        self.assertEqual(writes[0][2]["tag_name"], "1.4.24")
-        self.assertEqual(writes[0][2]["target_commitish"], "b" * 40)
-        self.assertNotIn("assets", writes[0][2])
-        self.assertNotIn("@javaht", writes[0][2]["body"])
-
-    def test_existing_release_is_not_republished_or_edited(self):
-        client = FakeGitHub()
-        release = client.api("repos/javaht/claude-desktop-zh-cn/releases/latest")
-        self.tracker.sync_release(client, release, "a" * 40)
-        self.assertFalse(any(c[0] != "GET" for c in client.calls))
-
-    def test_release_sync_rejects_conflicting_tag_without_moving_it(self):
-        client = FakeGitHub()
-        client.tag_sha = "c" * 40
-        release = client.api("repos/javaht/claude-desktop-zh-cn/releases/latest")
-        with self.assertRaises(ValueError):
-            self.tracker.sync_release(client, release, "a" * 40)
-        self.assertFalse(any(c[0] != "GET" for c in client.calls))
-
-    def test_release_outside_mirror_is_not_published(self):
-        client = FakeGitHub()
-        client.release_ancestry = "diverged"
-        release = client.api("repos/javaht/claude-desktop-zh-cn/releases/latest")
-        with self.assertRaises(ValueError):
-            self.tracker.sync_release(client, release, "a" * 40)
-        self.assertFalse(any(c[0] != "GET" for c in client.calls))
-
-    def test_optional_lookup_suppresses_only_not_found(self):
-        github = self.tracker.GitHub()
-        for code, expected in [("github_not_found", None), ("github_permission_denied", "raise")]:
-            with patch.object(github, "run", side_effect=self.tracker.TrackingError(code)):
-                if expected == "raise":
-                    with self.assertRaises(self.tracker.TrackingError):
-                        github.api("repos/test/releases/tags/test", missing_ok=True)
-                else:
-                    self.assertIsNone(github.api("repos/test/releases/tags/test", missing_ok=True))
-
-    def test_release_permission_failure_does_not_block_review_proposal(self):
-        client = FakeGitHub(pending=2)
-        client.release_exists = False
-        original_api = client.api
-
-        def restricted_api(endpoint, method="GET", data=None, missing_ok=False):
-            if method == "POST" and endpoint.endswith("/releases"):
-                raise self.tracker.TrackingError("github_permission_denied")
-            return original_api(endpoint, method, data, missing_ok)
-
-        with patch.object(client, "api", side_effect=restricted_api):
-            with self.assertRaises(self.tracker.TrackingError):
-                self.tracker.track(client)
-        proposals = [c for c in client.calls if c[0] == "POST" and c[1].endswith("/pulls")]
-        self.assertEqual(len(proposals), 1)
-        self.assertTrue(proposals[0][2]["draft"])
+        report = self.tracker.track(client)
+        self.assertEqual(report["release_url"], "https://github.com/javaht/claude-desktop-zh-cn/releases/tag/1.4.24")
+        self.assertNotIn("fork_release_url", report)
+        release_calls = [(c[0], c[1]) for c in client.calls if len(c) > 1 and "/releases" in c[1]]
+        self.assertEqual(release_calls, [("GET", "repos/javaht/claude-desktop-zh-cn/releases/latest")])
 
 
 if __name__ == "__main__":

@@ -4,11 +4,9 @@ Follow upstream `javaht/claude-desktop-zh-cn`; keep only necessary Windows compa
 
 Read `maintenance/README.zh-CN.md` and `maintenance/compatibility.json`. Keep locale handling idempotent, preserve explicit non-English overrides and the original Cowork service binary. Unknown or ambiguous anchors must fail safely.
 
-Cloud tracking fast-forwards main, mirrors the latest official Release at its original upstream commit and maintains one draft PR. Never move existing tags or upload local release files; leave existing release notes unchanged. Preserve human notes outside the PR tracking block. The authorized daily check may review upstream changes, resolve confirmed conflicts in an integration branch and merge through a protected PR after required Windows/Linux checks pass. Review new code, dependencies and workflow permissions before executing tests; prefer GitHub-hosted CI. Never equate a draft PR with passing CI.
+Use the upstream official Release as the default download source. Cloud tracking reads its metadata, fast-forwards main and maintains one draft PR; it never creates/edits Releases or tags. Existing Fork releases remain labeled backups. Preserve human notes outside the PR tracking block. The authorized daily check may review upstream changes, resolve confirmed conflicts in an integration branch and merge through a protected PR after required Windows/Linux checks pass. Review new code, dependencies and workflow permissions before executing tests; prefer GitHub-hosted CI. Never equate a draft PR with passing CI.
 
 Maintenance never stops/restarts Claude, installs patches or changes client update settings. A separately requested installation requires backups, integrity/syntax checks and observed UI verification before updating the verified baseline.
-
-If GitHub's workflow-scope restrictions block cloud Release creation, daily maintenance may run the reviewed coordinator with existing gh authentication to complete it. Do not add credentials or move tags.
 
 Keep machine state, installed versions, local paths and detailed evidence only in ignored `.maintenance/`; do not publish them in files or PRs. Never access or upload credentials, private application configuration/databases, chat history or raw application logs. Use the existing GitHub token and hosted runners; synchronization needs no persistent personal token, local runner, inbound service or tunnel.
 
