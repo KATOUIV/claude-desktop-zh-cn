@@ -19,6 +19,8 @@ param(
     [string]$OriginalAppData = "",
     [string]$OriginalLocalAppData = "",
 
+    [string]$ClaudePath = "",
+
     # 非交互安装（脚本调用、自动化）默认不允许接管 WindowsApps 的所有权。
     # 需要显式授权，避免在没人确认的情况下静默改动系统保护目录的 ACL。
     [switch]$AllowTakeOwnership
@@ -37,6 +39,11 @@ $script:InstallLogPath = $null
 $script:InstallTranscriptStarted = $false
 $script:PreInstallCleanupDone = $false
 $script:SkipFrontendFileBackups = $false
+
+$script:ExplicitClaudePath = ""
+if ($ClaudePath) { $script:ExplicitClaudePath = $ClaudePath }
+elseif ($env:CLAUDE_PATH) { $script:ExplicitClaudePath = $env:CLAUDE_PATH }
+elseif ($env:CLAUDE_ZH_CUSTOM_PATH) { $script:ExplicitClaudePath = $env:CLAUDE_ZH_CUSTOM_PATH }
 
 if ($OriginalUserSid) { $env:CLAUDE_ZH_ORIGINAL_USER_SID = $OriginalUserSid }
 if ($OriginalUserProfile) { $env:CLAUDE_ZH_ORIGINAL_USER_PROFILE = $OriginalUserProfile }
@@ -265,6 +272,89 @@ function Test-UnpackagedClaudeAppDirectory {
         (Test-Path -LiteralPath (Join-Path $Directory.FullName "resources"))
 }
 
+function Get-CustomClaudePaths {
+    $custom = @()
+    if ($script:ExplicitClaudePath) { $custom += $script:ExplicitClaudePath }
+    if ($env:CLAUDE_PATH) { $custom += $env:CLAUDE_PATH }
+    if ($env:CLAUDE_ZH_CUSTOM_PATH) { $custom += $env:CLAUDE_ZH_CUSTOM_PATH }
+
+    $valid = @()
+    foreach ($path in ($custom | Where-Object { $_ } | Select-Object -Unique)) {
+        if (-not (Test-Path -LiteralPath $path)) { continue }
+        $res = Join-Path $path "resources"
+        if (-not (Test-Path -LiteralPath $res)) {
+            $res = Join-Path $path "app\resources"
+        }
+        if ((Test-Path -LiteralPath $res) -and (Get-ClaudeExePath $path)) {
+            try {
+                $valid += (Resolve-Path -LiteralPath $path).Path
+            }
+            catch {
+                $valid += $path
+            }
+        }
+    }
+    return @($valid | Select-Object -Unique)
+}
+
+function Get-ScoopClaudePaths {
+    $scoopRoots = @()
+    if ($env:SCOOP) { $scoopRoots += $env:SCOOP }
+    if ($env:CLAUDE_ZH_ORIGINAL_SCOOP) { $scoopRoots += $env:CLAUDE_ZH_ORIGINAL_SCOOP }
+    if ($env:CLAUDE_ZH_ORIGINAL_USER_PROFILE) {
+        $scoopRoots += Join-Path $env:CLAUDE_ZH_ORIGINAL_USER_PROFILE "scoop"
+    }
+    $userProfile = [Environment]::GetFolderPath('UserProfile')
+    if ($userProfile) {
+        $scoopRoots += Join-Path $userProfile "scoop"
+    }
+    if ($env:SCOOP_GLOBAL) { $scoopRoots += $env:SCOOP_GLOBAL }
+    $programData = [Environment]::GetFolderPath('CommonApplicationData')
+    if ($programData) {
+        $scoopRoots += Join-Path $programData "scoop"
+    }
+
+    $candidates = @()
+    foreach ($root in ($scoopRoots | Where-Object { $_ } | Select-Object -Unique)) {
+        if (-not (Test-Path -LiteralPath $root)) { continue }
+        foreach ($appName in @("claude", "claude-desktop", "AnthropicClaude")) {
+            $appBase = Join-Path $root (Join-Path "apps" $appName)
+            if (-not (Test-Path -LiteralPath $appBase)) { continue }
+
+            # 1. current 目录（Scoop 标准活动目录软链接/Junction）
+            $current = Join-Path $appBase "current"
+            if (Test-Path -LiteralPath $current) {
+                try {
+                    $candidates += (Resolve-Path -LiteralPath $current).Path
+                }
+                catch {
+                    $candidates += $current
+                }
+            }
+
+            # 2. 版本子目录（如 5.11492.5）
+            $versionDirs = @(Get-ChildItem -LiteralPath $appBase -Directory -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -ne "current" } |
+                Sort-Object `
+                    @{ Expression = {
+                        if ($_.Name -match '^\d+(?:\.\d+)+$') {
+                            try { [System.Version]$_.Name } catch { [System.Version]::new(0, 0) }
+                        } else {
+                            [System.Version]::new(0, 0)
+                        }
+                    }; Descending = $true },
+                    @{ Expression = { $_.LastWriteTime }; Descending = $true } |
+                ForEach-Object { $_.FullName })
+            $candidates += $versionDirs
+        }
+    }
+
+    return @($candidates | Where-Object {
+        $res = Join-Path $_ "resources"
+        (Test-Path -LiteralPath $res) -and (Get-ClaudeExePath $_)
+    } | Select-Object -Unique)
+}
+
 function Get-UnpackagedClaudePaths {
     $localAppData = [Environment]::GetFolderPath('LocalApplicationData')
     if (-not $localAppData) {
@@ -300,38 +390,32 @@ function Get-ClaudeAppxPackages {
 }
 
 function Find-ClaudePath {
-    $packages = @(Get-ClaudeAppxPackages)
-    foreach ($package in $packages) {
-        if ($package.InstallLocation -and (Test-Path $package.InstallLocation)) {
-            return $package.InstallLocation
-        }
+    $packages = @(Get-ClaudeAppxPackages |
+        Where-Object { $_.InstallLocation -and (Test-Path $_.InstallLocation) } |
+        Sort-Object `
+            @{ Expression = {
+                try { [System.Version]$_.Version } catch { [System.Version]::new(0, 0) }
+            }; Descending = $true })
+    if ($packages.Count -gt 0) {
+        return $packages[0].InstallLocation
     }
 
     $fallback = Get-ChildItem "C:\Program Files\WindowsApps" -Directory -Filter "*Claude*" -ErrorAction SilentlyContinue |
-        Sort-Object LastWriteTime -Descending |
+        Sort-Object `
+            @{ Expression = {
+                if ($_.Name -match '_(\d+(?:\.\d+)+)_') {
+                    try { [System.Version]$Matches[1] } catch { [System.Version]::new(0, 0) }
+                } else {
+                    [System.Version]::new(0, 0)
+                }
+            }; Descending = $true },
+            @{ Expression = { $_.LastWriteTime }; Descending = $true } |
         Select-Object -First 1
     if ($fallback) {
         return $fallback.FullName
     }
 
     return $null
-}
-
-function Get-ClaudeExeProductVersion {
-    param([string]$ClaudePath)
-
-    foreach ($name in @("Claude.exe", "claude.exe")) {
-        $exePath = Join-Path $ClaudePath $name
-        if (Test-Path -LiteralPath $exePath) {
-            try {
-                return [string](Get-Item -LiteralPath $exePath).VersionInfo.ProductVersion
-            }
-            catch {
-                return "未知"
-            }
-        }
-    }
-    return "未知"
 }
 
 function Get-ClaudeExePath {
@@ -349,6 +433,24 @@ function Get-ClaudeExePath {
         }
     }
     return $null
+}
+
+function Get-ClaudeExeProductVersion {
+    param([string]$ClaudePath)
+
+    $exePath = Get-ClaudeExePath $ClaudePath
+    if ($exePath -and (Test-Path -LiteralPath $exePath)) {
+        try {
+            $ver = [string](Get-Item -LiteralPath $exePath).VersionInfo.ProductVersion
+            if ($ver -and $ver.Trim()) {
+                return $ver.Trim()
+            }
+        }
+        catch {
+            return "未知"
+        }
+    }
+    return "未知"
 }
 
 function Remove-LegacyAppxForkArtifacts {
@@ -371,6 +473,41 @@ function Remove-LegacyAppxForkArtifacts {
 }
 
 function Get-ClaudeResourcesPath {
+    # 1. 显式指定的自定义安装路径（-ClaudePath / CLAUDE_PATH）
+    $customCandidates = @(Get-CustomClaudePaths)
+    foreach ($candidatePath in $customCandidates) {
+        $candidateResources = Join-Path $candidatePath "resources"
+        if (-not (Test-Path $candidateResources)) {
+            $candidateResources = Join-Path $candidatePath "app\resources"
+        }
+        if ((Test-Path $candidateResources) -and (Test-FrontendBundleAvailable $candidateResources)) {
+            Write-Host "  Claude 版本: $(Get-ClaudeExeProductVersion $candidatePath)" -ForegroundColor DarkGray
+            return @{
+                App = $candidatePath
+                Resources = $candidateResources
+                InstallKind = "Custom"
+            }
+        }
+    }
+
+    # 2. Scoop 安装目录（Scoop extras/claude）
+    $scoopCandidates = @(Get-ScoopClaudePaths)
+    foreach ($candidatePath in $scoopCandidates) {
+        $candidateResources = Join-Path $candidatePath "resources"
+        if (-not (Test-Path $candidateResources)) {
+            $candidateResources = Join-Path $candidatePath "app\resources"
+        }
+        if ((Test-Path $candidateResources) -and (Test-FrontendBundleAvailable $candidateResources)) {
+            Write-Host "  Claude 版本: $(Get-ClaudeExeProductVersion $candidatePath)" -ForegroundColor DarkGray
+            return @{
+                App = $candidatePath
+                Resources = $candidateResources
+                InstallKind = "Scoop"
+            }
+        }
+    }
+
+    # 3. 官方 Squirrel 历史解包路径（%LocalAppData%\AnthropicClaude\app-*）
     $script:DetectedUnpackagedClaudePaths = @(Get-UnpackagedClaudePaths)
     $script:DetectedMultipleClaudeInstalls = $false
 
@@ -419,7 +556,7 @@ function Get-ClaudeResourcesPath {
         if ($script:DetectedUnpackagedClaudePaths.Count -gt 0) {
             throw "未找到可补丁的 Claude Desktop 安装：本地 app-* 目录均缺前端 bundle，商店版也未检测到。请确认 Claude Desktop 已完整安装（安装后至少启动过一次），或清理旧 app-* 目录后重试。"
         }
-        throw "未找到 Claude Desktop 安装。"
+        throw "未找到 Claude Desktop 安装。若使用非标准目录安装（如 Scoop 等），可通过设置环境变量 CLAUDE_PATH 指向安装目录后重试。"
     }
 
     $resourcesPath = Join-Path $claudePath "app\resources"
@@ -1317,6 +1454,75 @@ function Read-AsarEntryBytes {
     return $bytes
 }
 
+function Test-FileReplaceable {
+    param(
+        [string]$Path,
+        [int]$TimeoutSeconds = 10
+    )
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return $true
+    }
+
+    # MoveFileEx(MOVEFILE_REPLACE_EXISTING) 要求目标可以被独占打开；被 Claude
+    # 之类的进程占用时，PowerShell 只会报 “Cannot create a file when that file already
+    # exists”，完全看不出是文件被锁。这里提前探测并等待句柄释放。
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    do {
+        try {
+            $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+            $stream.Dispose()
+            return $true
+        }
+        catch [System.IO.IOException] {
+            Start-Sleep -Milliseconds 500
+        }
+        catch [System.UnauthorizedAccessException] {
+            return $false
+        }
+    } while ([DateTime]::UtcNow -lt $deadline)
+
+    return $false
+}
+
+function Assert-AsarReplaceable {
+    param(
+        [string]$Path,
+        [int]$TimeoutSeconds = 10
+    )
+
+    if (Test-FileReplaceable $Path $TimeoutSeconds) {
+        return
+    }
+
+    throw "无法替换 $Path：文件仍被占用或不可写。请彻底退出 Claude Desktop（任务管理器结束所有 Claude.exe / cowork-svc.exe）后重试；若应用在另一个 Windows 账户下运行，请先注销该账户。"
+}
+
+function Move-FileWithRetry {
+    param(
+        [string]$Source,
+        [string]$Destination,
+        [int]$Retries = 5,
+        [int]$DelayMilliseconds = 500
+    )
+
+    $lastError = $null
+    for ($attempt = 1; $attempt -le [Math]::Max(1, $Retries); $attempt++) {
+        try {
+            Move-Item -LiteralPath $Source -Destination $Destination -Force -ErrorAction Stop
+            return
+        }
+        catch {
+            $lastError = $_
+            if ($attempt -lt $Retries) {
+                Start-Sleep -Milliseconds $DelayMilliseconds
+            }
+        }
+    }
+
+    throw "无法替换 $Destination：文件可能仍被 Claude Desktop 占用。请彻底退出 Claude 后重试。原始错误：$($lastError.Exception.Message)"
+}
+
 function Write-AsarArchiveWithHeader {
     param(
         [string]$AsarPath,
@@ -1325,6 +1531,9 @@ function Write-AsarArchiveWithHeader {
         $Header,
         [byte[]]$Append
     )
+
+    # 先确认目标没有被 Claude 占用，避免临时文件写完才发现无法替换。
+    Assert-AsarReplaceable -Path $AsarPath
 
     # app.asar 是主进程包，真实安装里含 unpacked / executable / link 条目，解包重打包会丢
     # 这些元数据甚至让应用起不来。这里只替换头部，原有 payload 原样流式拷贝（头内 offset
@@ -1386,7 +1595,13 @@ function Write-AsarArchiveWithHeader {
         throw
     }
 
-    Move-Item -LiteralPath $temporary -Destination $AsarPath -Force
+    try {
+        Move-FileWithRetry -Source $temporary -Destination $AsarPath
+    }
+    catch {
+        Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
+        throw
+    }
 }
 
 function Set-AsarEntryContent {
@@ -1658,13 +1873,15 @@ function Complete-FrontendPatchTarget {
 
     $temporaryAsar = $Target.AsarPath + ".zh-cn-new"
     Remove-Item -LiteralPath $temporaryAsar -Force -ErrorAction SilentlyContinue
+    # 重新打包前确认目标没有被 Claude 占用，避免耗时打包完成后才失败。
+    Assert-AsarReplaceable -Path $Target.AsarPath
     Write-Host "  正在重新打包 ion-dist.asar..." -ForegroundColor DarkGray
     New-AsarArchive $Target.WorkspacePath $temporaryAsar
     try {
         if (-not (Test-AsarFrontendArchive $temporaryAsar)) {
             throw "重新打包后的 ion-dist.asar 未通过结构校验。"
         }
-        Move-Item -LiteralPath $temporaryAsar -Destination $Target.AsarPath -Force
+        Move-FileWithRetry -Source $temporaryAsar -Destination $Target.AsarPath
         Write-Host "  ion-dist.asar 已更新" -ForegroundColor Green
         Sync-ClaudeExeAsarIntegrity $Target.ResourcesPath
     }
@@ -3442,53 +3659,56 @@ function Test-ServiceControlAvailable {
 }
 
 function Stop-CoworkVMService {
-    $serviceName = "CoworkVMService"
     if (-not (Test-ServiceControlAvailable)) {
         return
     }
 
-    $service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
-    if (-not $service) {
-        return
-    }
-
-    if ($service.Status -ne "Stopped") {
-        try {
-            Write-Host "  正在停止 $serviceName 服务..." -ForegroundColor DarkGray
-            Stop-Service -Name $serviceName -Force -ErrorAction Stop
-            Start-Sleep -Seconds 1
-        }
-        catch {
-            Write-Host "  [提示] 停止 $serviceName 服务: $($_.Exception.Message)" -ForegroundColor DarkGray
+    $serviceNames = @("CoworkVMService", "CoworkVMServiceStore")
+    foreach ($serviceName in $serviceNames) {
+        $service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+        if ($service -and $service.Status -ne "Stopped") {
+            try {
+                Write-Host "  正在停止 $serviceName 服务..." -ForegroundColor DarkGray
+                Stop-Service -Name $serviceName -Force -ErrorAction Stop
+                Start-Sleep -Seconds 1
+            }
+            catch {
+                Write-Host "  [提示] 停止 $serviceName 服务: $($_.Exception.Message)" -ForegroundColor DarkGray
+            }
         }
     }
 }
 
 function Start-CoworkVMService {
-    $serviceName = "CoworkVMService"
     if (-not (Test-ServiceControlAvailable)) {
         return
     }
 
-    $service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
-    if (-not $service) {
-        Write-Host "  [提示] 未找到 $serviceName 服务，跳过。" -ForegroundColor DarkGray
-        return
-    }
-
-    if ($service.Status -eq "Running") {
-        Write-Host "  $serviceName 已在运行" -ForegroundColor Green
-        return
-    }
-
-    try {
-        Start-Service -Name $serviceName -ErrorAction Stop
-        Start-Sleep -Seconds 2
+    $serviceNames = @("CoworkVMService", "CoworkVMServiceStore")
+    $foundAny = $false
+    foreach ($serviceName in $serviceNames) {
         $service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
-        Write-Host "  $serviceName 已启动，当前状态: $($service.Status)" -ForegroundColor Green
+        if ($service) {
+            $foundAny = $true
+            if ($service.Status -eq "Running") {
+                Write-Host "  $serviceName 已在运行" -ForegroundColor Green
+                continue
+            }
+
+            try {
+                Start-Service -Name $serviceName -ErrorAction Stop
+                Start-Sleep -Seconds 2
+                $service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+                Write-Host "  $serviceName 已启动，当前状态: $($service.Status)" -ForegroundColor Green
+            }
+            catch {
+                Write-Host "  [警告] 启动 $serviceName 失败: $($_.Exception.Message)" -ForegroundColor Yellow
+            }
+        }
     }
-    catch {
-        Write-Host "  [警告] 启动 $serviceName 失败: $($_.Exception.Message)" -ForegroundColor Yellow
+
+    if (-not $foundAny) {
+        Write-Host "  [提示] 未找到 CoworkVMService 服务，跳过。" -ForegroundColor DarkGray
     }
 }
 
@@ -3897,21 +4117,58 @@ function Test-ClaudeDesktopProcessPath {
     if (-not $Path) {
         return $false
     }
-    return ($Path -match "WindowsApps\\Claude_" -or $Path -match "AnthropicClaude\\app-")
+    return ($Path -match "(?i)WindowsApps\\.*Claude" -or
+            $Path -match "(?i)AnthropicClaude\\app-" -or
+            $Path -match "(?i)scoop\\apps\\(?:claude|claude-desktop)" -or
+            ($script:ExplicitClaudePath -and $Path.StartsWith($script:ExplicitClaudePath, [System.StringComparison]::OrdinalIgnoreCase)) -or
+            ($env:CLAUDE_PATH -and $Path.StartsWith($env:CLAUDE_PATH, [System.StringComparison]::OrdinalIgnoreCase)))
 }
 
 function Get-ClaudeDesktopProcesses {
+    # Win32_Process 可跨用户会话枚举；旧实现用 Get-Process + MainModule 取路径，
+    # 读取另一账户会话里的 MSIX 进程会被拒绝并静默跳过，安装器就会误以为应用已退出，
+    # 随后替换 app.asar 时被锁文件挡住（issue #244）。
     $procs = @()
-    foreach ($proc in Get-Process -Name "claude" -ErrorAction SilentlyContinue) {
-        try {
-            $path = $proc.MainModule.FileName
-            if (Test-ClaudeDesktopProcessPath $path) {
+    $seen = @{}
+    $cimAvailable = $null -ne (Get-Command Get-CimInstance -ErrorAction SilentlyContinue)
+    if ($cimAvailable) {
+        $items = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.Name -ieq "claude.exe" -and (Test-ClaudeDesktopProcessPath $_.ExecutablePath)
+            })
+
+        foreach ($item in $items) {
+            if ($seen.ContainsKey([int]$item.ProcessId)) { continue }
+            $seen[[int]$item.ProcessId] = $true
+            $proc = Get-Process -Id $item.ProcessId -ErrorAction SilentlyContinue
+            if ($proc) {
                 $procs += $proc
             }
-        } catch {
-            # MainModule inaccessible (permission or 32/64 mismatch) — skip rather than risk killing Claude Code.
+            else {
+                # 进程存在但当前身份读不到；保留 PID/名称，交给 taskkill 兜底。
+                $procs += [pscustomobject]@{
+                    Id = [int]$item.ProcessId
+                    ProcessName = [IO.Path]::GetFileNameWithoutExtension([string]$item.Name)
+                    MainWindowHandle = 0
+                    HasExited = $false
+                }
+            }
         }
     }
+
+    if (-not $cimAvailable) {
+        foreach ($proc in Get-Process -Name "claude" -ErrorAction SilentlyContinue) {
+            try {
+                $path = $proc.MainModule.FileName
+                if (Test-ClaudeDesktopProcessPath $path) {
+                    $procs += $proc
+                }
+            } catch {
+                # MainModule 不可读；CIM 不可用时只能跳过，避免误杀。
+            }
+        }
+    }
+
     return @($procs | Sort-Object Id -Unique)
 }
 
@@ -3986,6 +4243,10 @@ function Stop-ClaudeProcessesGracefully {
                 # 已退出或无法终止
             }
         }
+        # Stop-Process 对跨会话/受保护的 MSIX 进程可能静默失败，再用 taskkill /PID 兜底。
+        foreach ($proc in @(Get-ClaudeDesktopProcesses)) {
+            $null = & taskkill.exe /PID $proc.Id 2>&1
+        }
         Start-Sleep -Seconds 1
     }
 
@@ -4003,6 +4264,11 @@ function Stop-ClaudeProcessesGracefully {
         }
         $remainingCowork = @(Wait-ProcessesExit $coworkProcs 5)
         foreach ($proc in $remainingCowork) {
+            # Stop-Process 可能被跨会话/服务保护挡住，用 taskkill 再试一次。
+            $null = & taskkill.exe /PID $proc.Id 2>&1
+        }
+        Start-Sleep -Milliseconds 500
+        foreach ($proc in @(Get-ClaudeCoworkProcesses)) {
             Write-Host "  [警告] 未能停止 Cowork 进程 PID $($proc.Id)，可能需要管理员权限或手动结束。" -ForegroundColor DarkYellow
         }
     }
@@ -4017,12 +4283,21 @@ function Stop-ClaudeProcessesGracefully {
 }
 
 function Stop-ClaudeProcesses {
-    $killed = Stop-ClaudeProcessesGracefully -TimeoutSeconds 10
-    if ($killed) {
-        Write-Host "  Claude Desktop 已停止" -ForegroundColor Green
-    } else {
-        Write-Host "  已强制停止 Claude Desktop" -ForegroundColor Green
+    param([switch]$RequireStopped)
+
+    $null = Stop-ClaudeProcessesGracefully -TimeoutSeconds 10
+    $remaining = @(@(Get-ClaudeDesktopProcesses) + @(Get-ClaudeCoworkProcesses) | Sort-Object Id -Unique)
+    if ($remaining.Count -gt 0) {
+        $list = ($remaining | ForEach-Object { "$($_.ProcessName) (PID=$($_.Id))" }) -join ", "
+        if ($RequireStopped) {
+            throw "无法停止 Claude Desktop（$list）。请先手动结束这些进程再重试；如果应用在另一个 Windows 账户下运行，请先注销该账户，或改用官网安装包。"
+        }
+        Write-Host "  [警告] 仍有 Claude 进程未退出: $list" -ForegroundColor DarkYellow
+        return $false
     }
+
+    Write-Host "  Claude Desktop 已停止" -ForegroundColor Green
+    return $true
 }
 
 function Restart-Claude {
@@ -4030,25 +4305,29 @@ function Restart-Claude {
 
     Stop-ClaudeProcesses
 
-    # AppX(MSIX) 安装优先用包激活启动: 进程带包身份, 更新检查走 msix 路径
+    # 仅对 AppX(MSIX) 安装优先用包激活启动: 进程带包身份, 更新检查走 msix 路径
     # (直接启动 exe 会被更新器误判为 Squirrel 解包安装而报 "Can not find Squirrel",
     #  Cowork 客户端校验也只能靠签名回退)
-    try {
-        $app = Get-StartApps -ErrorAction Stop | Where-Object { $_.AppID -like "*Claude_*!*" } | Select-Object -First 1
-        if ($app -and $app.AppID) {
-            Start-Process -FilePath "explorer.exe" -ArgumentList "shell:AppsFolder\$($app.AppID)"
-            Write-Host "  已通过 AppX 激活重启 Claude Desktop ($($app.AppID))" -ForegroundColor Green
-            return
+    if ($ClaudePath -match "WindowsApps") {
+        try {
+            $app = Get-StartApps -ErrorAction Stop | Where-Object { $_.AppID -like "*Claude_*!*" } | Select-Object -First 1
+            if ($app -and $app.AppID) {
+                Start-Process -FilePath "explorer.exe" -ArgumentList "shell:AppsFolder\$($app.AppID)"
+                Write-Host "  已通过 AppX 激活重启 Claude Desktop ($($app.AppID))" -ForegroundColor Green
+                return
+            }
+        } catch {
+            Write-Host "  [提示] AppX 激活不可用($($_.Exception.Message))，改用直接启动。" -ForegroundColor DarkYellow
         }
-    } catch {
-        Write-Host "  [提示] AppX 激活不可用($($_.Exception.Message))，改用直接启动。" -ForegroundColor DarkYellow
     }
 
     $exe = Get-ClaudeExePath $ClaudePath
     if ($exe) {
         Start-Process -FilePath "explorer.exe" -ArgumentList "`"$exe`""
         Write-Host "  restarted Claude Desktop" -ForegroundColor Green
-        Write-Host "  [提示] MSIX 安装建议从开始菜单启动 Claude，以获得完整功能(自动更新/Cowork)。" -ForegroundColor DarkYellow
+        if ($ClaudePath -match "WindowsApps") {
+            Write-Host "  [提示] MSIX 安装建议从开始菜单启动 Claude，以获得完整功能(自动更新/Cowork)。" -ForegroundColor DarkYellow
+        }
         return
     }
 
@@ -4077,7 +4356,7 @@ function Install-WindowsLanguagePack {
         $pack = Get-LanguageResources $LanguageCode
 
         Write-Step "关闭 Claude Desktop"
-        Stop-ClaudeProcesses
+        Stop-ClaudeProcesses -RequireStopped
 
         Write-Step "[2/7] 查找 Claude Desktop"
         $paths = Get-ClaudeResourcesPath
@@ -4087,7 +4366,18 @@ function Install-WindowsLanguagePack {
         Write-Host "  app: $claudePath" -ForegroundColor Green
         Write-Host "  resources: $resourcesPath" -ForegroundColor Green
         if ($installKind -eq "AppX") {
-            Write-Host "  安装类型: 商店版 (MSIX/AppX)" -ForegroundColor DarkGray
+            if ($resourcesPath -match '(?i)\\WindowsApps\\AnthropicPBC\.Claude_') {
+                Write-Host "  安装类型: Microsoft Store 商店版 (MSIX/AppX)" -ForegroundColor DarkGray
+            }
+            else {
+                Write-Host "  安装类型: 官网安装包 (MSIX/AppX)" -ForegroundColor DarkGray
+            }
+        }
+        elseif ($installKind -eq "Scoop") {
+            Write-Host "  安装类型: Scoop 安装包 (extras/claude)" -ForegroundColor DarkGray
+        }
+        elseif ($installKind -eq "Custom") {
+            Write-Host "  安装类型: 自定义路径" -ForegroundColor DarkGray
         }
         # 先只读校验完整性标记，再动任何 asar：4.4212 曾出现「asar 已改、exe 哈希写不回」
         # 的半坏状态，这里在结构不兼容时零副作用地快速失败。
@@ -4098,6 +4388,11 @@ function Install-WindowsLanguagePack {
 
         Write-Step "[3/7] 准备写入权限"
         Assert-WriteAccess $resourcesPath "安装"
+        # 先确认应用确实退出、asar 可替换，再动任何文件；否则可能写到一半才失败。
+        $null = Stop-ClaudeProcesses -RequireStopped
+        foreach ($asarPath in @((Join-Path $resourcesPath "app.asar"), (Join-Path $resourcesPath "ion-dist.asar"))) {
+            Assert-AsarReplaceable -Path $asarPath
+        }
         Remove-LegacyAppxForkArtifacts
         $patchTarget = Initialize-FrontendPatchTarget $resourcesPath
 
@@ -4118,6 +4413,8 @@ function Install-WindowsLanguagePack {
         if ($mergedFrontend -gt 0) {
             Write-Host "  ion-dist.asar 已把 $LanguageCode 词库覆盖进 i18n/en-US.json（$mergedFrontend 条）" -ForegroundColor Green
         }
+        # 前端补丁阶段可能耗时数分钟，MSIX 版可能在期间被重新激活；写 app.asar 前再确认一次。
+        $null = Stop-ClaudeProcesses -RequireStopped
         Patch-DesktopShellLocale $resourcesPath $LanguageCode
         Complete-FrontendPatchTarget $patchTarget
         Close-FrontendPatchTarget $patchTarget
@@ -4177,7 +4474,7 @@ function Uninstall-WindowsLanguagePack {
     Remove-LegacyFridaResident
 
     Write-Step "关闭 Claude Desktop"
-    Stop-ClaudeProcesses
+    Stop-ClaudeProcesses -RequireStopped
     Remove-LegacyAppxForkArtifacts
 
     # 卸载路径同样要写回备份、重同步 exe 哈希，所以也得先把权限拿到。
