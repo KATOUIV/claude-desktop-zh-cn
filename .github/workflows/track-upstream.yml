@@ -21,7 +21,7 @@ jobs:
         with:
           ref: katou/windows-compat
           persist-credentials: false
-      - name: Sync mirror, official release and review proposal
+      - name: Fast-forward mirror and prepare review proposal
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
