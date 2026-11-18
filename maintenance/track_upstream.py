@@ -106,10 +106,8 @@ def track(client, repository=REPOSITORY):
              f"正式 Release：[{release['tag_name']}]({release['html_url']})。\n\n"
              f"镜像提交：`{report['mirror_sha']}`；待审上游提交：{pending}。\n\n"
              f"相关文件（最多显示 30 个，完整差异见 PR Files changed）：\n{names}\n\n"
-             "本区块仅记录同步信息，不代表兼容性或测试通过。正式 Release 之后的 main 提交可能尚未发布。\n\n"
-             "云端仅快进 main，绝不自动合并维护分支、解决代码冲突或安装客户端补丁。"
-             "GitHub 内置令牌创建的 PR 可能需要另行批准工作流，不能把创建 PR 当作测试通过；由 Codex 审阅、必要时在整合分支解决冲突，"
-             "推送后等待 Windows/Linux 必需检查通过，再按保护规则合并。\n"
+             "仅为同步提案；main 可能含未发布改动。审阅并确认 Windows/Linux 必需检查通过后，按保护规则合并。"
+             "客户端适配和安装另行验证。\n"
              f"{END}")
     if matches:
         pr = matches[0]
