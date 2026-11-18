@@ -16,16 +16,16 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
-    env:
-      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: katou/windows-compat
           persist-credentials: false
       - name: Fast-forward mirror and prepare review proposal
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          python maintenance/track_upstream.py --repository "$GITHUB_REPOSITORY" --report "$RUNNER_TEMP/upstream-tracking.json" --summary "$GITHUB_STEP_SUMMARY"
+          python maintenance/track_upstream.py --repository "$GITHUB_REPOSITORY" --run-id "$GITHUB_RUN_ID" --report "$RUNNER_TEMP/upstream-tracking.json" --summary "$GITHUB_STEP_SUMMARY"
       - name: Retain sanitized tracking metadata
         if: always()
         uses: actions/upload-artifact@v4

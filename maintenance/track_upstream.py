@@ -9,8 +9,13 @@ import argparse
 import html
 import json
 import subprocess
+import sys
 from pathlib import Path
 from urllib.parse import urlencode
+
+# Support both direct execution and importlib-based regression tests.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from run_records import sanitize
 
 REPOSITORY = "KATOUIV/claude-desktop-zh-cn"
 UPSTREAM = "javaht/claude-desktop-zh-cn"
@@ -19,12 +24,32 @@ BEGIN = "<!-- upstream-tracking:start -->"
 END = "<!-- upstream-tracking:end -->"
 
 
+class TrackingError(RuntimeError):
+    def __init__(self, code):
+        self.code = code
+        super().__init__(code)
+
+
 class GitHub:
     @staticmethod
     def run(command, payload=None):
-        result = subprocess.run(command, input=payload, capture_output=True, text=True, encoding="utf-8")
+        try:
+            result = subprocess.run(command, input=payload, capture_output=True, text=True, encoding="utf-8", timeout=90)
+        except subprocess.TimeoutExpired:
+            raise TrackingError("github_timeout") from None
         if result.returncode:
-            raise RuntimeError(f"{command[0]} failed ({result.returncode}): {result.stderr.strip()[:2000]}")
+            # Inspect in memory only. Never expose raw gh stderr in reports/tracebacks.
+            detail = result.stderr.lower()
+            code = "github_command_failed"
+            if "diverged" in detail or "not possible to fast-forward" in detail:
+                code = "mirror_diverged"
+            elif "rate limit" in detail:
+                code = "github_rate_limited"
+            elif "http 401" in detail or "not logged" in detail:
+                code = "github_auth_failed"
+            elif "http 403" in detail or "resource not accessible" in detail:
+                code = "github_permission_denied"
+            raise TrackingError(code)
         return result.stdout
 
     def sync(self):
@@ -104,16 +129,24 @@ def main():
     parser.add_argument("--repository", required=True)
     parser.add_argument("--report", type=Path, required=True)
     parser.add_argument("--summary", type=Path, required=True)
+    parser.add_argument("--run-id")
     args = parser.parse_args()
     try:
         report = track(GitHub(), args.repository)
     except Exception as error:
-        report = {"status": "failed", "error": str(error)}
-        raise
-    finally:
+        code = error.code if isinstance(error, TrackingError) else "invalid_tracking_state" if isinstance(error, (ValueError, KeyError, TypeError)) else "tracking_failed"
+        report = {"status": "failed", "error_code": code}
+    report = sanitize({**report, "run_id": args.run_id})
+    try:
         args.report.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         args.summary.write_text("## Upstream tracking\n\n```json\n" + json.dumps(report, ensure_ascii=False, indent=2)
                                 + "\n```\n", encoding="utf-8")
+    except Exception:
+        print("Upstream tracking failed: report_write_failed", file=sys.stderr)
+        raise SystemExit(1) from None
+    if report["status"] == "failed":
+        print(f"Upstream tracking failed: {report['error_code']}; fingerprint={report['fingerprint']}", file=sys.stderr)
+        raise SystemExit(1) from None
     print(json.dumps(report, ensure_ascii=False))
 
 
