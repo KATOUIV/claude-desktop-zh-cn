@@ -124,8 +124,8 @@ def track(client, repository=REPOSITORY):
     report = {"status": "current" if pending == 0 else "review_needed", "release": release["tag_name"],
               "release_url": release["html_url"], "mirror_sha": mirror_sha,
               "pending_commits": pending, "compatibility_only_commits": compare["behind_by"]}
-    report["fork_release_url"] = sync_release(client, release, mirror_sha)
     if pending == 0:
+        report["fork_release_url"] = sync_release(client, release, mirror_sha)
         return report
 
     matches = []
@@ -160,6 +160,7 @@ def track(client, repository=REPOSITORY):
             "title": "审阅上游更新（保留 Windows 兼容修复）", "head": "main", "base": BASE,
             "draft": True, "body": block})
     report["pull_request"] = pr["html_url"]
+    report["fork_release_url"] = sync_release(client, release, mirror_sha)
     return report
 
 

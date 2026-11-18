@@ -219,6 +219,23 @@ class UpstreamTrackingTests(unittest.TestCase):
                 else:
                     self.assertIsNone(github.api("repos/test/releases/tags/test", missing_ok=True))
 
+    def test_release_permission_failure_does_not_block_review_proposal(self):
+        client = FakeGitHub(pending=2)
+        client.release_exists = False
+        original_api = client.api
+
+        def restricted_api(endpoint, method="GET", data=None, missing_ok=False):
+            if method == "POST" and endpoint.endswith("/releases"):
+                raise self.tracker.TrackingError("github_permission_denied")
+            return original_api(endpoint, method, data, missing_ok)
+
+        with patch.object(client, "api", side_effect=restricted_api):
+            with self.assertRaises(self.tracker.TrackingError):
+                self.tracker.track(client)
+        proposals = [c for c in client.calls if c[0] == "POST" and c[1].endswith("/pulls")]
+        self.assertEqual(len(proposals), 1)
+        self.assertTrue(proposals[0][2]["draft"])
+
 
 if __name__ == "__main__":
     unittest.main()
