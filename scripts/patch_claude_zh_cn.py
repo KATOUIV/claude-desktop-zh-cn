@@ -142,24 +142,40 @@ def elapsed_since(start: float) -> str:
     return f"{time.perf_counter() - start:.1f}s"
 
 LANG_LIST_RE = re.compile(
-    r'\["en-US","de-DE","fr-FR","ko-KR","ja-JP","es-419","es-ES","it-IT","hi-IN","pt-BR","id-ID"(?:(?:,"zh-CN")|(?:,"zh-TW")|(?:,"zh-HK"))*\]'
+    r'\["en-US","de-DE","fr-FR","ko-KR","ja-JP","es-419","es-ES","it-IT","hi-IN","pt-BR","id-ID"'
+    r'(?:(?:,"zh-CN")|(?:,"zh-TW")|(?:,"zh-HK")|(?:,"zh-Hans")|(?:,"zh-Hant"))*\]'
 )
 BASE_LANGUAGE_LIST = '["en-US","de-DE","fr-FR","ko-KR","ja-JP","es-419","es-ES","it-IT","hi-IN","pt-BR","id-ID"'
+
+# 官方 Claude Desktop 使用 BCP-47 代码 zh-Hans / zh-Hant（桌面壳层词库只有这两种）；
+# 仓库词表仍按 zh-CN / zh-TW / zh-HK 维护，这里做资源查找用的别名。
+RESOURCE_LANG_ALIASES = {
+    "zh-Hans": "zh-CN",
+    "zh-Hant": "zh-TW",
+}
+
+
+def resource_language_code(lang_code: str) -> str:
+    """Map a runtime locale code to the repository resource suffix."""
+    return RESOURCE_LANG_ALIASES.get(lang_code, lang_code)
 
 
 def get_language_config(lang_code: str) -> dict[str, Any]:
     """Return file paths and settings for the given language code."""
+    resource_code = resource_language_code(lang_code)
     return {
         "lang_code": lang_code,
-        "frontend_translation": RESOURCES / f"frontend-{lang_code}.json",
-        "frontend_hardcoded": RESOURCES / f"frontend-hardcoded-{lang_code}.json",
-        "desktop_translation": RESOURCES / f"desktop-{lang_code}.json",
-        "localizable_strings": RESOURCES / f"Localizable-{lang_code}.strings" if (RESOURCES / f"Localizable-{lang_code}.strings").exists() else RESOURCES / "Localizable.strings",
-        "statsig_translation": RESOURCES / f"statsig-{lang_code}.json",
+        "frontend_translation": RESOURCES / f"frontend-{resource_code}.json",
+        "frontend_hardcoded": RESOURCES / f"frontend-hardcoded-{resource_code}.json",
+        "desktop_translation": RESOURCES / f"desktop-{resource_code}.json",
+        "localizable_strings": RESOURCES / f"Localizable-{resource_code}.strings" if (RESOURCES / f"Localizable-{resource_code}.strings").exists() else RESOURCES / "Localizable.strings",
+        "statsig_translation": RESOURCES / f"statsig-{resource_code}.json",
         "label": {
             "zh-CN": "简体中文",
             "zh-TW": "繁體中文（台灣）",
             "zh-HK": "繁體中文（香港）",
+            "zh-Hans": "简体中文",
+            "zh-Hant": "繁體中文",
         }.get(lang_code, lang_code),
     }
 
@@ -1101,7 +1117,7 @@ def install_dynamic_locale(app: Path, lang_code: str) -> None:
     # 2.9939.2 起 dynamic catalog 与主语言包一起强制加载（fetch 非 2xx 直接抛错），
     # 缺失会让整个 zh 语言包加载失败并回退英文。有随包中文 dynamic 词表时优先使用，
     # 否则按官方 en-US 原文兜底，保证加载不失败。
-    localized = RESOURCES / f"dynamic-{lang_code}.json"
+    localized = RESOURCES / f"dynamic-{resource_language_code(lang_code)}.json"
     shutil.copy2(localized if localized.exists() else source, dynamic_dir / f"{lang_code}.json")
     print(f"Installed frontend dynamic {lang_code} resource")
 
@@ -1257,6 +1273,16 @@ def clear_quarantine(app: Path) -> None:
         print("Cleared Gatekeeper quarantine attribute")
 
 
+def safe_chown(path: Path, uid: int, gid: int) -> None:
+    if hasattr(os, "chown") and path.exists():
+        try:
+            st = path.stat()
+            if st.st_uid != uid or st.st_gid != gid:
+                os.chown(path, uid, gid)
+        except OSError:
+            pass
+
+
 def set_user_locale(user_home: Path, lang_code: str) -> None:
     """Write locale into Claude (+ Claude-3p if present) user config."""
     targets = [
@@ -1265,16 +1291,22 @@ def set_user_locale(user_home: Path, lang_code: str) -> None:
     ]
     sudo_uid = os.environ.get("SUDO_UID")
     sudo_gid = os.environ.get("SUDO_GID")
-    if not (sudo_uid and sudo_gid) and os.geteuid() == 0:
+    if not (sudo_uid and sudo_gid) and hasattr(os, "geteuid") and os.geteuid() == 0:
         # macOS `do shell script ... with administrator privileges` does not
         # provide SUDO_UID/GID; preserve the owner of the requested home.
         owner = user_home.stat()
         sudo_uid, sudo_gid = str(owner.st_uid), str(owner.st_gid)
 
     for config in targets:
-        if config.name.startswith("Claude-3p") and not config.parent.exists():
+        if config.parent.name.startswith("Claude-3p") and not config.parent.exists():
             continue
         config.parent.mkdir(parents=True, exist_ok=True)
+        if sudo_uid and sudo_gid:
+            curr = config.parent
+            while curr != user_home and curr.parent != curr:
+                safe_chown(curr, int(sudo_uid), int(sudo_gid))
+                curr = curr.parent
+            safe_chown(config, int(sudo_uid), int(sudo_gid))
         data: dict[str, Any] = {}
         if config.exists():
             try:
@@ -1291,9 +1323,12 @@ def set_user_locale(user_home: Path, lang_code: str) -> None:
             continue
         data["locale"] = lang_code
         save_json(config, data)
-        os.chmod(config, 0o600)
+        try:
+            os.chmod(config, 0o600)
+        except OSError:
+            pass
         if sudo_uid and sudo_gid:
-            os.chown(config, int(sudo_uid), int(sudo_gid))
+            safe_chown(config, int(sudo_uid), int(sudo_gid))
         print(f"Set Claude config locale: {config} -> {lang_code}")
 
 
@@ -1303,7 +1338,7 @@ def chown_to_sudo_user(path: Path) -> None:
     sudo_uid = os.environ.get("SUDO_UID")
     sudo_gid = os.environ.get("SUDO_GID")
     if sudo_uid and sudo_gid and path.exists():
-        os.chown(path, int(sudo_uid), int(sudo_gid))
+        safe_chown(path, int(sudo_uid), int(sudo_gid))
 
 
 def load_json_object_or_backup(path: Path, dry_run: bool = False) -> dict[str, Any]:

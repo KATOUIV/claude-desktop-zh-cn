@@ -24,6 +24,18 @@ REA 静态分析针对安装包中的语言模块；项目安装流程直接依�
 
 ## 后续升级
 
+### 分支保护（2026-11-18）
+
+- `main` 已启用禁止删除、禁止强推的规则；保持上游镜像，只允许日常快进同步，不在该分支解决兼容冲突。
+- `katou/windows-compat` 已启用禁止删除、禁止强推、必须通过 PR、Windows/Linux 回归测试通过且与目标分支同步、解决审阅讨论后才能合并的规则。只允许 merge commit，以保留上游提交关系。
+- 两套规则均无绕过名单。仓库目前只有一名维护者，因此不要求其他人的审批票数，但 PR 和测试要求仍然生效。
+- GitHub 的“Sync fork / Discard commits”会丢弃维护分支独有修复，不用于此分支。遇到词库冲突，从维护分支创建整合分支，合并 `main`，保留上游词条及本地补充词条，再通过 PR 测试和合并。独有提交的 ahead 数量是正常现象。
+- 规则位置：[镜像历史保护](https://github.com/KATOUIV/claude-desktop-zh-cn/rules/27519295)、[Windows 维护保护](https://github.com/KATOUIV/claude-desktop-zh-cn/rules/27519296)。
+
+### 当前客户端限制
+
+2026-11-18 只读检查发现本机已升级为 Claude 6.6395.0。桌面壳层自带 `zh-Hans` / `zh-Hant`，前端仍缺少中文词库，原 Code 语言 setter 锚点已变化，旧 helper 会拒绝处理。此次仓库同步不代表 6.x 已适配；不要直接在该版本运行旧安装方案。`compatibility.json` 的已验证版本保持为 4.23118.0 / 4.23118.1，后续须单独完成适配、备份及安装后界面验证。
+
 1. 查看上游 Release、`main` 与维护分支的差异，创建或更新 `main` → `katou/windows-compat` 的待审 PR。
 2. 先运行项目回归测试及 `tests/test_windows_locale_preference.ps1`，核对语言模块锚点。上游若已有等效修复，优先采用上游实现。
 3. 备份新版本原始文件；保持 CC Switch 接口、密钥和供应商不变。安装并重启验证后更新兼容性记录。
