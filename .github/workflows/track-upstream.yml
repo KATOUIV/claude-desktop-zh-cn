@@ -1,10 +1,10 @@
 name: Track upstream localization
 on:
   schedule:
-    - cron: '0 1 * * *' # 09:00 Asia/Hong_Kong; GitHub may delay scheduled jobs.
+    - cron: '17 */6 * * *' # Every six hours; GitHub may delay scheduled jobs.
   workflow_dispatch:
 permissions:
-  contents: write
+  contents: read
 concurrency:
   group: track-upstream
   cancel-in-progress: false
@@ -12,21 +12,25 @@ jobs:
   sync:
     if: github.repository == 'KATOUIV/claude-desktop-zh-cn'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
     env:
       GH_TOKEN: ${{ github.token }}
-      UPSTREAM: javaht/claude-desktop-zh-cn
     steps:
-      - name: Fast-forward the upstream mirror
-        shell: bash
+      - uses: actions/checkout@v4
+        with:
+          ref: katou/windows-compat
+          persist-credentials: false
+      - name: Fast-forward mirror and prepare review proposal
         run: |
-          set -euo pipefail
-          gh repo sync "$GITHUB_REPOSITORY" --source "$UPSTREAM" --branch main
-          release=$(gh api "repos/$UPSTREAM/releases/latest" --jq .tag_name)
-          ahead=$(gh api "repos/$GITHUB_REPOSITORY/compare/katou%2Fwindows-compat...main" --jq .ahead_by)
-          {
-            echo '### Localization upstream tracking'
-            printf 'Latest upstream release: `%s`\n\n' "$release"
-            printf 'Commits pending compatibility review: %s\n\n' "$ahead"
-            printf '[Review changes](https://github.com/%s/compare/katou/windows-compat...main)\n' "$GITHUB_REPOSITORY"
-            echo 'Only main is fast-forwarded. The compatibility branch and local Claude installation are preserved.'
-          } >> "$GITHUB_STEP_SUMMARY"
+          python maintenance/track_upstream.py --repository "$GITHUB_REPOSITORY" --report "$RUNNER_TEMP/upstream-tracking.json" --summary "$GITHUB_STEP_SUMMARY"
+      - name: Retain sanitized tracking metadata
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: upstream-tracking
+          path: ${{ runner.temp }}/upstream-tracking.json
+          retention-days: 14
+          if-no-files-found: warn
