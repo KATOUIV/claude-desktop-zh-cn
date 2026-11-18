@@ -8,7 +8,7 @@
 
 **Tech stack:** GitHub Actions, gh CLI, Python standard library, existing Codex heartbeat.
 
-**Constraints:** No force push, no branch-protection bypass, no unreviewed merge, no changes to running Claude or its user data. Use the existing automation rather than a second schedule. No new long-lived credentials. A GitHub-token-created draft does not imply CI ran; the agent must push a reviewed integration branch using its existing authenticated session to trigger full CI.
+**Constraints:** No force push, no branch-protection bypass, no unreviewed merge, no changes to running Claude or its user data. Use the existing automation rather than a second schedule. No new long-lived credentials. A GitHub-token-created draft does not imply CI ran: PR workflows may await approval, while token push events do not start downstream CI. The agent must review and approve required checks or push a reviewed integration branch to trigger full CI.
 
 **Review focus:** Duplicate proposals; overwritten human review notes; failed mirror synchronization followed by writes; forbidden repositories; API pagination; temporary network/auth failures; stale workflows or disabled GitHub schedules.
 
