@@ -4,6 +4,7 @@ import contextlib
 import io
 import json
 import tempfile
+import subprocess
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -135,12 +136,29 @@ class UpstreamTrackingTests(unittest.TestCase):
             report, summary = Path(temp) / "report.json", Path(temp) / "summary.md"
             arguments = [str(SCRIPT), "--repository", self.tracker.REPOSITORY,
                          "--report", str(report), "--summary", str(summary)]
-            with patch("sys.argv", arguments), patch.object(self.tracker, "GitHub", return_value=client):
-                with self.assertRaisesRegex(RuntimeError, "mirror diverged"):
+            with patch("sys.argv", arguments), patch.object(self.tracker, "GitHub", return_value=client), contextlib.redirect_stderr(io.StringIO()) as stderr:
+                with self.assertRaises(SystemExit) as failure:
                     self.tracker.main()
-            self.assertEqual(json.loads(report.read_text(encoding="utf-8"))["status"], "failed")
-            self.assertIn("mirror diverged", summary.read_text(encoding="utf-8"))
+            record = json.loads(report.read_text(encoding="utf-8"))
+            self.assertEqual(failure.exception.code, 1)
+            self.assertEqual(record["status"], "failed")
+            self.assertEqual(record["error_code"], "tracking_failed")
+            self.assertNotIn("mirror diverged", report.read_text() + summary.read_text() + stderr.getvalue())
             self.assertEqual(client.calls, [("sync",)])
+
+    def test_subprocess_error_never_contains_raw_diagnostics(self):
+        response = subprocess.CompletedProcess(["gh"], 1, stdout="", stderr="HTTP 403 FAKE_PRIVATE_TEXT")
+        with patch.object(self.tracker.subprocess, "run", return_value=response):
+            with self.assertRaises(self.tracker.TrackingError) as error:
+                self.tracker.GitHub.run(["gh", "api"])
+        self.assertEqual(error.exception.code, "github_permission_denied")
+        self.assertNotIn("FAKE_PRIVATE_TEXT", str(error.exception))
+
+    def test_subprocess_timeout_has_safe_code(self):
+        with patch.object(self.tracker.subprocess, "run", side_effect=subprocess.TimeoutExpired("FAKE_PRIVATE_TEXT", 90)):
+            with self.assertRaises(self.tracker.TrackingError) as error:
+                self.tracker.GitHub.run(["gh", "api"])
+        self.assertEqual(str(error.exception), "github_timeout")
 
 
 if __name__ == "__main__":
