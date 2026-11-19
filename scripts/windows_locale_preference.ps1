@@ -2,17 +2,20 @@
 function Convert-CodeLocalePreference {
     param([Parameter(Mandatory = $true)][string]$Text)
     $state = 'isLoaded:!1,localeOverride:null,localeChoice:null,localePickCount:0'
-    $setter = 'setLocaleOverride:t=>{let n=t===null?null:nu(t);'
+    $setterPattern = 'setLocaleOverride:t=>\{let n=t===null\?null:(?<normalizer>nu|ss)\(t\);'
     $fixedState = 'isLoaded:!1,localeOverride:"zh-CN",localeChoice:"zh-CN",localePickCount:0'
-    $fixedSetter = 'setLocaleOverride:t=>{let n=t===null?"zh-CN":nu(t==="en-US"?"zh-CN":t);'
+    $fixedSetterPattern = 'setLocaleOverride:t=>\{let n=t===null\?"zh-CN":(?:nu|ss)\(t==="en-US"\?"zh-CN":t\);'
     $stateCount = [regex]::Matches($Text, [regex]::Escape($state)).Count
-    $setterCount = [regex]::Matches($Text, [regex]::Escape($setter)).Count
+    $setterMatches = [regex]::Matches($Text, $setterPattern)
+    $setterCount = $setterMatches.Count
     $fixedStateCount = [regex]::Matches($Text, [regex]::Escape($fixedState)).Count
-    $fixedSetterCount = [regex]::Matches($Text, [regex]::Escape($fixedSetter)).Count
+    $fixedSetterCount = [regex]::Matches($Text, $fixedSetterPattern).Count
     if ($stateCount -eq 0 -and $setterCount -eq 0 -and $fixedStateCount -eq 1 -and $fixedSetterCount -eq 1) { return $Text }
     if ($stateCount -ne 1 -or $setterCount -ne 1 -or $fixedStateCount -ne 0 -or $fixedSetterCount -ne 0) {
         throw 'Unsupported Code locale layout: review the new bundle before patching.'
     }
+    $setter = $setterMatches[0].Value
+    $fixedSetter = 'setLocaleOverride:t=>{let n=t===null?"zh-CN":' + $setterMatches[0].Groups['normalizer'].Value + '(t==="en-US"?"zh-CN":t);'
     return $Text.Replace($state, $fixedState).Replace($setter, $fixedSetter)
 }
 
