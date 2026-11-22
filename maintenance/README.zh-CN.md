@@ -1,6 +1,6 @@
 # Windows 汉化维护
 
-沿用 [上游项目](https://github.com/javaht/claude-desktop-zh-cn) 的安装器、词库和测试，仅保留必要的 Windows Code 语言修复及两个补充词条；上游提供等效修复后优先替换。
+沿用 [上游项目](https://github.com/javaht/claude-desktop-zh-cn) 的安装器、词库和测试，仅保留必要的 Windows Code 语言修复；上游提供等效修复后优先替换。
 
 ## 更新与安装
 
